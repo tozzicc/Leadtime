@@ -1,0 +1,13 @@
+{
+  "name": "lead-time-app",
+  "version": "1.0.0",
+  "scripts": {
+    "install-all": "cd backend && npm install && cd ../frontend && npm install",
+    "backend": "cd backend && npx ts-node server.ts",
+    "frontend": "cd frontend && npm run dev",
+    "dev": "npx concurrently \"npm run backend\" \"npm run frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
