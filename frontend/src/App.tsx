@@ -13,6 +13,9 @@ interface LeadTimeData {
   ZC_SIGLA: string;
   ZC_DIAS: number;
   DATA_PREVISTA: string;
+  LT_PREVISTO: number;
+  LT_EXECUTADO: number | null;
+  STATUS_LT: string;
 }
 
 interface OPGroup {
@@ -21,7 +24,9 @@ interface OPGroup {
   qtd: number;
   dataInicio: string;
   dataPrevistaFinal: string;
-  steps: { sigla: string; dias: number; dataPrevista: string }[];
+  ltExecutado: number | null;
+  statusLt: string;
+  steps: { sigla: string; dias: number; dataPrevista: string; ltPrevisto: number; statusLt: string }[];
   totalDays: number;
 }
 
@@ -36,7 +41,8 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [siglaColors, setSiglaColors] = useState<{ [key: string]: string }>({});
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedYear, setSelectedYear] = useState<string>('all');
+  const [availableYears, setAvailableYears] = useState<string[]>([]);
+  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return localStorage.getItem('theme') as 'light' | 'dark' || 'dark';
   });
@@ -51,14 +57,33 @@ const App: React.FC = () => {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Load available years
+  useEffect(() => {
+    const loadYears = async () => {
+      try {
+        const response = await axios.get<string[]>('/api/years', { timeout: 10000 });
+        setAvailableYears(response.data);
+        
+        const currentYear = new Date().getFullYear().toString();
+        if (response.data.includes(currentYear)) {
+          setSelectedYear(currentYear);
+        } else if (response.data.length > 0) {
+          setSelectedYear(response.data[0]);
+        } else {
+          setSelectedYear('all');
+        }
+      } catch (err) {
+        console.error('Error fetching available years:', err);
+      }
+    };
+    loadYears();
+  }, []);
+
   const fetchData = async (search: string = '', year: string = 'all') => {
     setLoading(true);
     setError(null);
     try {
-      const serverIP = window.location.hostname;
-      console.log(`Fetching from: http://${serverIP}:3001/api/leadtime?search=${search}&year=${year}`);
-      
-      const response = await axios.get<LeadTimeData[]>(`http://${serverIP}:3001/api/leadtime`, {
+      const response = await axios.get<LeadTimeData[]>('/api/leadtime', {
         params: { search, year },
         timeout: 10000
       });
@@ -74,14 +99,23 @@ const App: React.FC = () => {
             qtd: item.QTD_OP,
             dataInicio: item.DATA_INICIO,
             dataPrevistaFinal: '', 
+            ltExecutado: item.LT_EXECUTADO,
+            statusLt: item.STATUS_LT,
             steps: [],
             totalDays: 0,
           };
+        } else {
+            // Update executed time if another row has a larger one or something (though it should be same group)
+            if (item.LT_EXECUTADO !== null && (grouped[item.NUM_OP].ltExecutado === null || item.LT_EXECUTADO > grouped[item.NUM_OP].ltExecutado!)) {
+                grouped[item.NUM_OP].ltExecutado = item.LT_EXECUTADO;
+            }
         }
         grouped[item.NUM_OP].steps.push({ 
             sigla: item.ZC_SIGLA, 
             dias: item.ZC_DIAS, 
-            dataPrevista: item.DATA_PREVISTA 
+            dataPrevista: item.DATA_PREVISTA,
+            ltPrevisto: item.LT_PREVISTO,
+            statusLt: item.STATUS_LT
         });
         // Total days for the timeline is the maximum dias among the steps
         if (item.ZC_DIAS > grouped[item.NUM_OP].totalDays) {
@@ -103,6 +137,7 @@ const App: React.FC = () => {
         const maxDateIdx = dates.indexOf(Math.max(...dates));
         if (maxDateIdx !== -1) {
             group.dataPrevistaFinal = group.steps[maxDateIdx].dataPrevista;
+            group.statusLt = group.steps[maxDateIdx].statusLt; // Status based on final step
         }
       });
 
@@ -169,13 +204,9 @@ const App: React.FC = () => {
             className="glass-card filter-select"
           >
             <option value="all">Anos: Todos</option>
-            <option value="2026">Ano: 2026</option>
-            <option value="2025">Ano: 2025</option>
-            <option value="2024">Ano: 2024</option>
-            <option value="2023">Ano: 2023</option>
-            <option value="2022">Ano: 2022</option>
-            <option value="2021">Ano: 2021</option>
-            <option value="2020">Ano: 2020</option>
+            {availableYears.map(year => (
+              <option key={year} value={year}>Ano: {year}</option>
+            ))}
           </select>
         </div>
 
@@ -279,12 +310,42 @@ const App: React.FC = () => {
                     </div>
                   </div>
                     
-                    <div className="relative">
+                    <div className="relative mb-6">
                        <ProductTimeline 
                         steps={item.steps} 
                         totalDays={item.totalDays} 
                         colors={siglaColors} 
                       />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6 pt-4 border-t border-white/5">
+                      <div>
+                        <div className="flex justify-between items-end mb-2">
+                           <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Leadtime Previsto</span>
+                           <span className="text-sm font-bold text-white">{item.totalDays} dias</span>
+                        </div>
+                        <div className="h-3 w-full bg-white/5 rounded-full overflow-hidden">
+                           <div className="h-full bg-primary" style={{width: '100%'}}></div>
+                        </div>
+                      </div>
+                      <div>
+                         <div className="flex justify-between items-end mb-2">
+                           <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Leadtime Realizado</span>
+                           <span className={`text-sm font-bold ${item.statusLt === 'ATRASADO' ? 'text-red-400' : 'text-green-400'}`}>
+                              {item.ltExecutado ?? 0} dias ({item.statusLt})
+                           </span>
+                        </div>
+                        <div className="h-3 w-full bg-white/5 rounded-full overflow-hidden">
+                           <div 
+                              className={`h-full transition-all duration-1000 ${
+                                item.statusLt === 'ATRASADO' ? 'bg-red-500' : 'bg-green-500'
+                              }`} 
+                              style={{
+                                width: `${Math.min(((item.ltExecutado ?? 0) / Math.max(item.totalDays, 1)) * 100, 100)}%`
+                              }}
+                           ></div>
+                        </div>
+                      </div>
                     </div>
                   </motion.div>
                 ))}
